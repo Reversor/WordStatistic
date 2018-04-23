@@ -13,10 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Tuple2;
 
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class Main {
 
@@ -27,14 +24,12 @@ public class Main {
             String pathTolstoy = "src/main/resources/Tolstoy/*.txt";
             String pathMarks = "src/main/resources/Marks/*.txt";
             String pathDuma = "src/main/resources/Duma/*.txt";
-            wordRatingRDD(sc, pathTolstoy);
-            wordRatingRDD(sc, pathMarks);
-//            top20(sc, ).forEach(System.out::println);
-//            sequenceFile.take(20).forEach(System.out::println);
+            wordRatingRDD(sc, pathTolstoy).leftOuterJoin(wordRatingRDD(sc, pathMarks)).sortByKey(false).take(20)
+                    .forEach(System.out::println);
         }
     }
 
-    static JavaPairRDD<Long, Iterable<String>> wordRatingRDD(JavaSparkContext sc, String path) {
+    private static JavaPairRDD<Long, Iterable<String>> wordRatingRDD(JavaSparkContext sc, String path) {
         JavaRDD<String> garbage = sc.textFile("src/main/resources/garbage.txt");
 
         return sc.textFile(path)
@@ -42,13 +37,12 @@ public class Main {
                 .flatMap(s -> Iterators.forArray(s.split("\\p{Space}")))
                 .map(String::toLowerCase)
                 .map(s -> s.replaceAll("\\p{Punct}", ""))
-                .filter(s -> s.length() > 1)
                 .subtract(garbage)
+                .filter(s -> s.length() > 1)
                 .mapToPair(s -> new Tuple2<>(s, 1L))
                 .reduceByKey(Long::sum)
                 .map(Tuple2::swap)
                 .mapToPair(t -> t)
-                .groupByKey()
-                .sortByKey(false);
+                .groupByKey();
     }
 }

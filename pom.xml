@@ -7,6 +7,7 @@
     <groupId>ru.reversor</groupId>
     <artifactId>Spark</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
 
     <properties>
         <spark.version>2.3.0</spark.version>
@@ -28,6 +29,7 @@
     </dependencies>
 
     <build>
+        <finalName>words</finalName>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>

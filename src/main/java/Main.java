@@ -1,57 +1,69 @@
 import com.google.common.collect.Iterators;
-import com.sun.org.apache.xalan.internal.xsltc.compiler.Pattern;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.io.IntWritable;
-import org.apache.hadoop.io.Text;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
-import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.sql.*;
 import org.apache.spark.storage.StorageLevel;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import scala.Tuple2;
 
-import java.io.PrintStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 public class Main {
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         SparkConf conf = new SparkConf().setAppName("Word count").setMaster("local[*]");
-//        String[] garbage = new String[]{"\n", "", "и", "в"};
         try (JavaSparkContext sc = new JavaSparkContext(conf)) {
-            JavaPairRDD<String, Long> ratingTolstoy =
-                    wordRatingRDD(sc, "src/main/resources/Tolstoy/*.txt");
-            JavaPairRDD<String, Long> ratingMarks =
-                    wordRatingRDD(sc, "src/main/resources/Marks/*.txt");
-            JavaPairRDD<String, Long> ratingDuma =
-                    wordRatingRDD(sc, "src/main/resources/Duma/*.txt");
-            List<Tuple2<Long, Iterable<String>>> result1 = ratingTolstoy.intersection(ratingMarks)
-                    .map(Tuple2::swap).mapToPair(t -> t).groupByKey().sortByKey(false).takeAsync(20).get();
-            System.out.println("Топ 20 слов из \"Война и мир\" Толстого в \"Капитал\" Маркса:");
-            result1.forEach(System.out::println);
-            List<Tuple2<Long, Iterable<String>>> result2 = ratingTolstoy
-                    .subtractByKey(ratingMarks).mapToPair(Tuple2::swap).groupByKey()
-                    .sortByKey(false).takeAsync(20).get();
-            System.out.println("Топ 20 слов из \"Война и мир\" Толстого которых нет в \"Капитал\" Маркса:");
-            result2.forEach(System.out::println);
-        } catch (InterruptedException | ExecutionException e) {
-            e.printStackTrace();
+            JavaPairRDD<String, Long> wordsCountTolstoy = wordCountsRDD(sc, "Tolstoy/*.txt");
+//            JavaPairRDD<String, Long> wordsCountMarks = wordCountsRDD(sc, "Marks/*.txt");
+            JavaPairRDD<String, Long> wordsCountDuma = wordCountsRDD(sc, "Duma/*.txt");
+
+            String tolstoyDuma = "result/TolstoyDuma";
+            cleanDir(tolstoyDuma);
+            wordsCountTolstoy.subtractByKey(wordsCountDuma)
+                    .mapToPair(Tuple2::swap)
+                    .groupByKey().sortByKey(false)
+                    .coalesce(1).saveAsTextFile(tolstoyDuma);
+
+            Long countTolstoy = wordsCountTolstoy.count();
+
+            Long countDuma = wordsCountDuma.count();
+            String wordsFreaquency = "result/wordsFreaquency";
+            cleanDir(wordsFreaquency);
+            wordsCountTolstoy.join(wordsCountDuma)
+                    .filter(t -> (double) t._2._1 / countTolstoy > (double) t._2._2 / countDuma)
+                    .mapToPair(t -> new Tuple2<>(t._2._1, t._1))
+                    .groupByKey().sortByKey(false)
+                    .coalesce(1).saveAsTextFile(wordsFreaquency);
+
         }
     }
 
-    private static JavaPairRDD<String, Long> wordRatingRDD(JavaSparkContext sc, String path) {
+    private static void cleanDir(String strPath) throws IOException {
+        Path path = Paths.get(strPath);
+        if (Files.exists(path)) {
+            Files.walk(path).sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+    }
+
+    private static JavaPairRDD<String, Long> wordCountsRDD(JavaSparkContext sc, String path) {
+        String nonAlphabet = Pattern.compile("[^A-Za-zА-Яа-я]", Pattern.UNICODE_CHARACTER_CLASS).pattern();
+        String space = Pattern.compile("\\p{Space}", Pattern.UNICODE_CHARACTER_CLASS).pattern();
         return sc.textFile(path)
                 .distinct()
-                .flatMap(s -> Iterators.forArray(s.split("\\p{Space}")))
-                .map(StringUtils::capitalize)
-                .map(s -> s.replaceAll("\\p{Blank}|\\p{Graph}", ""))
-                .subtract(sc.textFile("src/main/resources/garbage.txt"))
+                .flatMap(s -> Iterators.forArray(s.split(space)))
+                .map(String::toLowerCase)
+                .map(s -> s.replaceAll(nonAlphabet, ""))
+                .subtract(sc.textFile("garbage.txt"))
                 .filter(s -> s.length() > 1)
                 .mapToPair(s -> new Tuple2<>(s, 1L))
                 .reduceByKey(Long::sum)

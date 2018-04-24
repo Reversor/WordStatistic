@@ -2,4 +2,4 @@ target
 *.iml
 .idea
 spark-warehous
-*/result
+result

@@ -1,4 +1,5 @@
 import com.google.common.collect.Iterators;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -29,15 +30,15 @@ public class Main {
                     .coalesce(1).saveAsTextFile(tolstoyDuma);
 
             Long countTolstoy = wordsCountTolstoy.count();
-
             Long countDuma = wordsCountDuma.count();
-            String wordsFreaquency = "result/wordsFreaquency";
-            cleanDir(wordsFreaquency);
-            wordsCountTolstoy.join(wordsCountDuma)
-                    .filter(t -> (double) t._2._1 / countTolstoy > (double) t._2._2 / countDuma)
+            String wordsFrequency = "result/wordsFreaquency";
+            cleanDir(wordsFrequency);
+            wordsCountDuma.join(wordsCountTolstoy)
+                    .filter(t -> (double) t._2._1 / countDuma > (double) t._2._2 / countTolstoy)
                     .mapToPair(t -> new Tuple2<>(t._2._1, t._1))
+                    .union(wordsCountDuma.subtractByKey(wordsCountTolstoy).mapToPair(Tuple2::swap))
                     .groupByKey().sortByKey(false)
-                    .coalesce(1).saveAsTextFile(wordsFreaquency);
+                    .coalesce(1).saveAsTextFile(wordsFrequency);
 
         }
     }
@@ -56,15 +57,17 @@ public class Main {
     }
 
     private static JavaPairRDD<String, Long> wordCountsRDD(JavaSparkContext sc, String path) {
-        String nonAlphabet = Pattern.compile("[^A-Za-zА-Яа-я]", Pattern.UNICODE_CHARACTER_CLASS).pattern();
-        String space = Pattern.compile("\\p{Space}", Pattern.UNICODE_CHARACTER_CLASS).pattern();
+        String nonAlphabet = "[^A-Za-zА-Яа-я]";
+        String space = Pattern.compile("\\p{Space}|\\h", Pattern.UNICODE_CHARACTER_CLASS).pattern();
+
         return sc.textFile(path)
+                .map(s -> s.replace("\\d+", ""))
                 .distinct()
                 .flatMap(s -> Iterators.forArray(s.split(space)))
-                .map(String::toLowerCase)
-                .map(s -> s.replaceAll(nonAlphabet, ""))
-                .subtract(sc.textFile("garbage.txt"))
                 .filter(s -> s.length() > 1)
+                .map(s -> s.replaceAll(nonAlphabet, ""))
+                .map(String::toLowerCase)
+                .subtract(sc.textFile("garbage.txt"))
                 .mapToPair(s -> new Tuple2<>(s, 1L))
                 .reduceByKey(Long::sum)
                 .mapToPair(t -> t)

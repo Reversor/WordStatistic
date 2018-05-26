@@ -5,6 +5,7 @@ import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.storage.StorageLevel;
 import scala.Tuple2;
+import scala.Tuple3;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,21 +25,20 @@ public class Main {
 
             String tolstoyDuma = "result/TolstoyDuma";
             cleanDir(tolstoyDuma);
-            wordsCountTolstoy.subtractByKey(wordsCountDuma)
-                    .mapToPair(Tuple2::swap)
-                    .groupByKey().sortByKey(false)
-                    .coalesce(1).saveAsTextFile(tolstoyDuma);
-
-            Long countTolstoy = wordsCountTolstoy.count();
-            Long countDuma = wordsCountDuma.count();
-            String wordsFrequency = "result/wordsFreaquency";
-            cleanDir(wordsFrequency);
-            wordsCountDuma.join(wordsCountTolstoy)
-                    .filter(t -> (double) t._2._1 / countDuma > (double) t._2._2 / countTolstoy)
-                    .mapToPair(t -> new Tuple2<>(t._2._1, t._1))
-                    .union(wordsCountDuma.subtractByKey(wordsCountTolstoy).mapToPair(Tuple2::swap))
-                    .groupByKey().sortByKey(false)
-                    .coalesce(1).saveAsTextFile(wordsFrequency);
+            Tuple2<Long, Tuple2<Long, Long>> combine;
+            wordsCountTolstoy
+                    .union(wordsCountDuma)
+                    .combineByKey(
+                            //инициализируем (кол-во встреч, счетчик)
+                            v -> Tuple2.apply(v, 1),
+                            //суммируем кол-во встреч, считаем сколько раз проссумировали, вызывается когда повторно нашли значение
+                            (t, v) -> Tuple2.apply(t._1() + v, t._2() + 1),
+                            //собираем показатели
+                            (c1, c2) -> Tuple2.apply(c1._1 + c2._1, c1._2 + c2._2)
+                    )
+                    .filter(t -> t._2._2 > 1)
+                    .mapValues(t -> t._2 / t._1) //frequency?
+                    .take(5).forEach(System.out::println);
 
         }
     }
